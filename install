@@ -1,0 +1,13 @@
+#!/bin/bash
+export CC="gcc"
+export LLVMCFLAGS=`llvm-config-mp-3.5 --cflags`
+export LLVMLDFLAGS=`llvm-config-mp-3.5 --libs --ldflags core analysis executionengine jit interpreter native`
+export CFLAGS="$LLVMCFLAGS -O0 -g3 -Wall -fvisibility=hidden"
+export LDFLAGS="$LLVMLDFLAGS"
+if [ -f Makefile ]; then
+	sudo make --silent clean
+	sudo phpize --silent --clean
+fi
+phpize --silent
+./configure --silent --enable-some
+make --silent && sudo make --silent install
