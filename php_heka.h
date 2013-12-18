@@ -6,11 +6,11 @@
 #include "kernel/globals.h"
 
 #define PHP_SOME_VERSION "0.0.1"
-#define PHP_SOME_EXTNAME "some"
+#define PHP_SOME_EXTNAME "heka"
 
 
 
-ZEND_BEGIN_MODULE_GLOBALS(some)
+ZEND_BEGIN_MODULE_GLOBALS(heka)
 
 	/* Memory */
 	zephir_memory_entry *start_memory;
@@ -30,30 +30,30 @@ ZEND_BEGIN_MODULE_GLOBALS(some)
 	zval *global_false;
 	zval *global_null;
 	
-ZEND_END_MODULE_GLOBALS(some)
+ZEND_END_MODULE_GLOBALS(heka)
 
 #ifdef ZTS
 #include "TSRM.h"
 #endif
 
-ZEND_EXTERN_MODULE_GLOBALS(some)
+ZEND_EXTERN_MODULE_GLOBALS(heka)
 
 #ifdef ZTS
-	#define ZEPHIR_GLOBAL(v) TSRMG(some_globals_id, zend_some_globals *, v)
+	#define ZEPHIR_GLOBAL(v) TSRMG(heka_globals_id, zend_heka_globals *, v)
 #else
-	#define ZEPHIR_GLOBAL(v) (some_globals.v)
+	#define ZEPHIR_GLOBAL(v) (heka_globals.v)
 #endif
 
 #ifdef ZTS
-	#define ZEPHIR_VGLOBAL ((zend_some_globals *) (*((void ***) tsrm_ls))[TSRM_UNSHUFFLE_RSRC_ID(some_globals_id)])
+	#define ZEPHIR_VGLOBAL ((zend_heka_globals *) (*((void ***) tsrm_ls))[TSRM_UNSHUFFLE_RSRC_ID(heka_globals_id)])
 #else
-	#define ZEPHIR_VGLOBAL &(some_globals)
+	#define ZEPHIR_VGLOBAL &(heka_globals)
 #endif
 
-#define zephir_globals some_globals
-#define zend_zephir_globals zend_some_globals
+#define zephir_globals heka_globals
+#define zend_zephir_globals zend_heka_globals
 
-extern zend_module_entry some_module_entry;
-#define phpext_some_ptr &some_module_entry
+extern zend_module_entry heka_module_entry;
+#define phpext_heka_ptr &heka_module_entry
 
 #endif
