@@ -5,7 +5,7 @@
 
 #include <php.h>
 #include "php_ext.h"
-#include "some.h"
+#include "heka.h"
 
 #include <ext/standard/info.h>
 
@@ -22,19 +22,19 @@
 #include "kernel/memory.h"
 
 ZEND_DLEXPORT void (*old_execute)(zend_op_array *op_array TSRMLS_DC);
-ZEND_DLEXPORT void some_execute(zend_op_array *op_array TSRMLS_DC);
-ZEND_DLEXPORT void some_execute_internal(zend_execute_data *execute_data_ptr, int return_value_used TSRMLS_DC);
+ZEND_DLEXPORT void heka_execute(zend_op_array *op_array TSRMLS_DC);
+ZEND_DLEXPORT void heka_execute_internal(zend_execute_data *execute_data_ptr, int return_value_used TSRMLS_DC);
 
-zend_class_entry *some_main_ce;
+zend_class_entry *heka_main_ce;
 
 LLVMModuleRef module;
 LLVMBuilderRef builder;
 LLVMPassManagerRef pass_mgr;
 LLVMExecutionEngineRef exec_engine;
 
-ZEND_DECLARE_MODULE_GLOBALS(some);
+ZEND_DECLARE_MODULE_GLOBALS(heka);
 
-int some_init_jit_engine(){
+int heka_init_jit_engine(){
 
 	char *err;
 
@@ -66,20 +66,20 @@ int some_init_jit_engine(){
 	return 0;
 }
 
-PHP_MINIT_FUNCTION(some){
+PHP_MINIT_FUNCTION(heka){
 
 	ZEPHIR_INIT(Some_Main);
 
-	some_init_jit_engine();
+	heka_init_jit_engine();
 
 	old_execute = zend_execute;
-	zend_execute = some_execute;
-	zend_execute_internal = some_execute_internal;
+	zend_execute = heka_execute;
+	zend_execute_internal = heka_execute_internal;
 
 	return SUCCESS;
 }
 
-ZEND_API void some_execute(zend_op_array *op_array TSRMLS_DC)
+ZEND_API void heka_execute(zend_op_array *op_array TSRMLS_DC)
 {
 	//char *fname = NULL;
 	char* name;
@@ -92,7 +92,7 @@ ZEND_API void some_execute(zend_op_array *op_array TSRMLS_DC)
 	old_execute(op_array TSRMLS_CC);
 }
 
-ZEND_API void some_execute_internal(zend_execute_data *execute_data_ptr, int return_value_used TSRMLS_DC)
+ZEND_API void heka_execute_internal(zend_execute_data *execute_data_ptr, int return_value_used TSRMLS_DC)
 {
 	//char *fname = NULL;
 	//zend_execute_data *execd;
@@ -100,7 +100,7 @@ ZEND_API void some_execute_internal(zend_execute_data *execute_data_ptr, int ret
 	zend_execute_internal(execute_data_ptr, return_value_used);
 }
 
-static PHP_MSHUTDOWN_FUNCTION(some){
+static PHP_MSHUTDOWN_FUNCTION(heka){
 
 	LLVMDumpModule (module);
 
@@ -114,15 +114,15 @@ static PHP_MSHUTDOWN_FUNCTION(some){
 	return SUCCESS;
 }
 
-static PHP_RINIT_FUNCTION(some){
+static PHP_RINIT_FUNCTION(heka){
 
 	php_zephir_init_globals(ZEPHIR_VGLOBAL TSRMLS_CC);
-	//some_init_interned_strings(TSRMLS_C);
+	//heka_init_interned_strings(TSRMLS_C);
 
 	return SUCCESS;
 }
 
-static PHP_RSHUTDOWN_FUNCTION(some){
+static PHP_RSHUTDOWN_FUNCTION(heka){
 
 	if (ZEPHIR_GLOBAL(start_memory) != NULL) {
 		zephir_clean_restore_stack(TSRMLS_C);
@@ -137,18 +137,18 @@ static PHP_RSHUTDOWN_FUNCTION(some){
 	return SUCCESS;
 }
 
-static PHP_MINFO_FUNCTION(some)
+static PHP_MINFO_FUNCTION(heka)
 {
 	php_info_print_table_start();
-	php_info_print_table_row(2, "Version", PHP_SOME_VERSION);
+	php_info_print_table_row(2, "Version", PHP_HEKA_VERSION);
 	php_info_print_table_end();
 }
 
-static PHP_GINIT_FUNCTION(some)
+static PHP_GINIT_FUNCTION(heka)
 {
 	zephir_memory_entry *start;
 
-	php_zephir_init_globals(some_globals TSRMLS_CC);
+	php_zephir_init_globals(heka_globals TSRMLS_CC);
 
 	/* Start Memory Frame */
 	start = (zephir_memory_entry *) pecalloc(1, sizeof(zephir_memory_entry), 1);
@@ -157,59 +157,59 @@ static PHP_GINIT_FUNCTION(some)
 	start->hash_addresses  = pecalloc(8, sizeof(zval*), 1);
 	start->hash_capacity   = 8;
 
-	some_globals->start_memory = start;
+	heka_globals->start_memory = start;
 
 	/* Global Constants */
-	ALLOC_PERMANENT_ZVAL(some_globals->global_false);
-	INIT_PZVAL(some_globals->global_false);
-	ZVAL_FALSE(some_globals->global_false);
-	Z_ADDREF_P(some_globals->global_false);
+	ALLOC_PERMANENT_ZVAL(heka_globals->global_false);
+	INIT_PZVAL(heka_globals->global_false);
+	ZVAL_FALSE(heka_globals->global_false);
+	Z_ADDREF_P(heka_globals->global_false);
 
-	ALLOC_PERMANENT_ZVAL(some_globals->global_true);
-	INIT_PZVAL(some_globals->global_true);
-	ZVAL_TRUE(some_globals->global_true);
-	Z_ADDREF_P(some_globals->global_true);
+	ALLOC_PERMANENT_ZVAL(heka_globals->global_true);
+	INIT_PZVAL(heka_globals->global_true);
+	ZVAL_TRUE(heka_globals->global_true);
+	Z_ADDREF_P(heka_globals->global_true);
 
-	ALLOC_PERMANENT_ZVAL(some_globals->global_null);
-	INIT_PZVAL(some_globals->global_null);
-	ZVAL_NULL(some_globals->global_null);
-	Z_ADDREF_P(some_globals->global_null);
+	ALLOC_PERMANENT_ZVAL(heka_globals->global_null);
+	INIT_PZVAL(heka_globals->global_null);
+	ZVAL_NULL(heka_globals->global_null);
+	Z_ADDREF_P(heka_globals->global_null);
 }
 
-static PHP_GSHUTDOWN_FUNCTION(some)
+static PHP_GSHUTDOWN_FUNCTION(heka)
 {
-	assert(some_globals->start_memory != NULL);
+	assert(heka_globals->start_memory != NULL);
 
-	pefree(some_globals->start_memory->hash_addresses, 1);
-	pefree(some_globals->start_memory->addresses, 1);
-	pefree(some_globals->start_memory, 1);
-	some_globals->start_memory = NULL;
+	pefree(heka_globals->start_memory->hash_addresses, 1);
+	pefree(heka_globals->start_memory->addresses, 1);
+	pefree(heka_globals->start_memory, 1);
+	heka_globals->start_memory = NULL;
 }
 
-zend_module_entry some_module_entry = {
+zend_module_entry heka_module_entry = {
 	STANDARD_MODULE_HEADER_EX,
 	NULL,
 	NULL,
-	PHP_SOME_EXTNAME,
+	PHP_HEKA_EXTNAME,
 	NULL,
-	PHP_MINIT(some),
+	PHP_MINIT(heka),
 #ifndef ZEPHIR_RELEASE
-	PHP_MSHUTDOWN(some),
+	PHP_MSHUTDOWN(heka),
 #else
 	NULL,
 #endif
-	PHP_RINIT(some),
-	PHP_RSHUTDOWN(some),
-	PHP_MINFO(some),
-	PHP_SOME_VERSION,
-	ZEND_MODULE_GLOBALS(some),
-	PHP_GINIT(some),
-	PHP_GSHUTDOWN(some),
+	PHP_RINIT(heka),
+	PHP_RSHUTDOWN(heka),
+	PHP_MINFO(heka),
+	PHP_HEKA_VERSION,
+	ZEND_MODULE_GLOBALS(heka),
+	PHP_GINIT(heka),
+	PHP_GSHUTDOWN(heka),
 	NULL,
 	STANDARD_MODULE_PROPERTIES_EX
 };
 
-#ifdef COMPILE_DL_SOME
-ZEND_GET_MODULE(some)
+#ifdef COMPILE_DL_HEKA
+ZEND_GET_MODULE(heka)
 #endif
 
