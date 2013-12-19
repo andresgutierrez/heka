@@ -13,7 +13,7 @@
 
 #include "kernel/main.h"
 
-ZEPHIR_INIT_CLASS(Some_Main) {
+ZEPHIR_INIT_CLASS(Heka_Main) {
 	ZEPHIR_REGISTER_CLASS(Heka, Main, heka, main, NULL, 0);
 	return SUCCESS;
 }

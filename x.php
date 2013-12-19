@@ -1,5 +1,9 @@
 <?php
 
-$a = 10;
+function do_echo()
+{
+	echo 10;
+}
 
-echo $a;
+
+do_echo();

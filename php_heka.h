@@ -1,13 +1,12 @@
 
 
-#ifndef PHP_SOME_H
-#define PHP_SOME_H 1
+#ifndef PHP_HEKA_H
+#define PHP_HEKA_H 1
 
 #include "kernel/globals.h"
 
-#define PHP_SOME_VERSION "0.0.1"
-#define PHP_SOME_EXTNAME "heka"
-
+#define PHP_HEKA_VERSION "0.0.1"
+#define PHP_HEKA_EXTNAME "heka"
 
 
 ZEND_BEGIN_MODULE_GLOBALS(heka)
@@ -57,3 +56,4 @@ extern zend_module_entry heka_module_entry;
 #define phpext_heka_ptr &heka_module_entry
 
 #endif
+
