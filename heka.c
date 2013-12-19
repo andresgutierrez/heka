@@ -182,6 +182,26 @@ char *heka_get_op_name(zend_uint opcode TSRMLS_DC){
 	return NULL;
 }
 
+void heka_php_printf(int param) {
+	php_printf("%d", param);
+}
+
+int heka_init_functions()
+{
+	LLVMTypeRef *arg_tys;
+	LLVMValueRef function;
+
+	arg_tys = malloc(1 * sizeof(*arg_tys));
+	//arg_tys[0] = LLVMPointerType(LLVMInt8Type(), 0);
+	arg_tys[0] = LLVMInt32Type();
+	function = LLVMAddFunction(module, "heka_php_printf", LLVMFunctionType(LLVMVoidType(), arg_tys, 1, 0));
+	if (!function) {
+		zend_error_noreturn(E_ERROR, "Cannot register php_printf");
+	}
+
+	return 0;
+}
+
 int heka_init_jit_engine(){
 
 	char *err;
@@ -211,15 +231,24 @@ int heka_init_jit_engine(){
 	LLVMAddCFGSimplificationPass(pass_mgr);
 	LLVMInitializeFunctionPassManager(pass_mgr);
 
+	heka_init_functions();
+
 	return 0;
 }
 
 LLVMValueRef heka_compile_func(zend_op_array *op_array, char* fn_name, LLVMModuleRef module, LLVMExecutionEngineRef exec_engine TSRMLS_DC) {
 
 	zend_uint i;
-	LLVMValueRef function;
+	LLVMValueRef function, php_printf_func;
+	LLVMValueRef args[1];
+	LLVMBasicBlockRef basic_block;
 
-	function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
+	//function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
+
+	function = LLVMAddFunction(module, fn_name, LLVMFunctionType(LLVMDoubleType(), NULL, 0, 0));
+
+	basic_block = LLVMAppendBasicBlock(function, "");
+	LLVMPositionBuilderAtEnd(builder, basic_block);
 
 	for (i = 0; i < op_array->last; ++i) {
 		zend_op* op = op_array->opcodes + i;
@@ -228,12 +257,23 @@ LLVMValueRef heka_compile_func(zend_op_array *op_array, char* fn_name, LLVMModul
 			case ZEND_EXT_STMT:
 				continue;
 			case ZEND_ECHO:
+
+				php_printf_func = LLVMGetNamedFunction(module, "heka_php_printf");
+				if (!php_printf_func) {
+					zend_error_noreturn(E_ERROR, "Cannot find php_printf");
+				}
+
+				//args[0] = LLVMConstString("%d", strlen("%d") + 1, 0);
+				args[0] = LLVMConstInt(LLVMInt32Type(), 10, 0);
+
+				LLVMBuildCall(builder, php_printf_func, args, 1, "");
 				break;
 		}
 
 		fprintf(stderr, "%s\n", heka_get_op_name(op->opcode));
 	}
 
+	return function;
 }
 
 PHP_MINIT_FUNCTION(heka){
@@ -252,7 +292,7 @@ PHP_MINIT_FUNCTION(heka){
 ZEND_API void heka_execute(zend_op_array *op_array TSRMLS_DC)
 {
 	LLVMValueRef function;
-	char* name;
+	//char* name;
 
 	/**
 	 * We're only interested in functions
@@ -264,8 +304,10 @@ ZEND_API void heka_execute(zend_op_array *op_array TSRMLS_DC)
 		if (!function) {
 			function = heka_compile_func(op_array, op_array->function_name, module, exec_engine TSRMLS_CC);
 			if (!function) {
-
+				zend_error_noreturn(E_ERROR, "Cannot compile function");
 			}
+
+			LLVMDumpValue(function);
 		}
 
 	}
@@ -285,6 +327,15 @@ ZEND_API void heka_execute_internal(zend_execute_data *execute_data_ptr, int ret
 
 	zend_execute_internal(execute_data_ptr, return_value_used);
 }
+
+/*const void* barMethodPointer = getMethodPointer(&Foo::Bar);
+const void* bazMethodPointer = getMethodPointer(foo, &Foo::Baz); // will get FooFoo::Baz
+
+llvm::ExecutionEngine* engine = llvm::EngineBuilder(module).Create();
+
+llvm::Function* bar = llvm::Function::Create(, Function::ExternalLinkage, "foo", module);
+engine->addGlobalMapping(bar, const_cast<void*>(barMethodPointer)); // LLVM always takes non-const pointers
+engine->addGlobalMapping(baz, const_cast<void*>(bazMethodPointer));*/
 
 static PHP_MSHUTDOWN_FUNCTION(heka){
 
