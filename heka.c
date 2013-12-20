@@ -168,6 +168,7 @@ LLVMModuleRef module;
 LLVMBuilderRef builder;
 LLVMPassManagerRef pass_mgr;
 LLVMExecutionEngineRef exec_engine;
+LLVMValueRef msg, msg_ptr;
 
 ZEND_DECLARE_MODULE_GLOBALS(heka);
 
@@ -182,31 +183,48 @@ char *heka_get_op_name(zend_uint opcode TSRMLS_DC){
 	return NULL;
 }
 
-void heka_php_printf(int param) {
-	php_printf("%d", param);
-}
-
 int heka_init_functions()
 {
 	LLVMTypeRef *arg_tys;
 	LLVMValueRef function;
 
-	arg_tys = malloc(1 * sizeof(*arg_tys));
-	//arg_tys[0] = LLVMPointerType(LLVMInt8Type(), 0);
-	arg_tys[0] = LLVMInt32Type();
-	function = LLVMAddFunction(module, "heka_php_printf", LLVMFunctionType(LLVMVoidType(), arg_tys, 1, 0));
+	arg_tys    = malloc(2 * sizeof(*arg_tys));
+	arg_tys[0] = LLVMPointerType(LLVMInt8Type(), 0);
+	arg_tys[1] = LLVMInt32Type();
+	function = LLVMAddFunction(module, "php_printf", LLVMFunctionType(LLVMVoidType(), arg_tys, 2, 0));
 	if (!function) {
 		zend_error_noreturn(E_ERROR, "Cannot register php_printf");
 	}
 
+	LLVMAddGlobalMapping(exec_engine, function, php_printf);
+	LLVMSetFunctionCallConv(function, LLVMCCallConv);
+	LLVMAddFunctionAttr(function, LLVMNoUnwindAttribute);
+
 	return 0;
+}
+
+LLVMValueRef llvmGenLocalStringVar(const char* data, int len)
+{
+
+	LLVMValueRef glob = LLVMAddGlobal(module, LLVMArrayType(LLVMInt8Type(), len), "string");
+
+	// set as internal linkage and constant
+	LLVMSetLinkage(glob, LLVMInternalLinkage);
+	LLVMSetGlobalConstant(glob, 1);
+
+	// Initialize with string:
+	LLVMSetInitializer(glob, LLVMConstString(data, len, 1));
+
+	LLVMDumpType(LLVMTypeOf(glob));
+
+	return glob;
 }
 
 int heka_init_jit_engine(){
 
 	char *err;
 
-	module = LLVMModuleCreateWithName("kaleidoscope JIT");
+	module = LLVMModuleCreateWithName("heka");
 	builder = LLVMCreateBuilder();
 
 	LLVMInitializeNativeTarget();
@@ -224,11 +242,11 @@ int heka_init_jit_engine(){
 
 	pass_mgr =  LLVMCreateFunctionPassManagerForModule(module);
 	LLVMAddTargetData(LLVMGetExecutionEngineTargetData(exec_engine), pass_mgr);
-	LLVMAddPromoteMemoryToRegisterPass(pass_mgr);
+	/*LLVMAddPromoteMemoryToRegisterPass(pass_mgr);
 	LLVMAddInstructionCombiningPass(pass_mgr);
 	LLVMAddReassociatePass(pass_mgr);
 	LLVMAddGVNPass(pass_mgr);
-	LLVMAddCFGSimplificationPass(pass_mgr);
+	LLVMAddCFGSimplificationPass(pass_mgr);*/
 	LLVMInitializeFunctionPassManager(pass_mgr);
 
 	heka_init_functions();
@@ -236,16 +254,43 @@ int heka_init_jit_engine(){
 	return 0;
 }
 
+void heka_echo_func(zend_op* op TSRMLS_DC) {
+
+	LLVMValueRef args[2];
+	LLVMValueRef php_printf_func;
+	zval *tmp_zval;
+
+	if (op->op1.op_type == IS_CONST) {
+
+		php_printf_func = LLVMGetNamedFunction(module, "php_printf");
+		if (!php_printf_func) {
+			zend_error_noreturn(E_ERROR, "Cannot find php_printf");
+		}
+
+		tmp_zval = &op->op1.u.constant;
+		switch (Z_TYPE_P(tmp_zval)) {
+			case IS_LONG:
+				args[0] = LLVMBuildGlobalStringPtr(builder, "%d", "");
+				args[1] = LLVMConstInt(LLVMInt32Type(), Z_LVAL_P(tmp_zval), 0);
+				LLVMBuildCall(builder, php_printf_func, args, 2, "");
+				break;
+			case IS_DOUBLE:
+				args[0] = LLVMBuildGlobalStringPtr(builder, "%f", "");
+				args[1] = LLVMConstReal(LLVMDoubleType(), Z_DVAL_P(tmp_zval));
+				LLVMBuildCall(builder, php_printf_func, args, 2, "");
+				break;
+		}
+	}
+
+}
+
 LLVMValueRef heka_compile_func(zend_op_array *op_array, char* fn_name, LLVMModuleRef module, LLVMExecutionEngineRef exec_engine TSRMLS_DC) {
 
 	zend_uint i;
-	LLVMValueRef function, php_printf_func;
-	LLVMValueRef args[1];
+	LLVMValueRef function;
 	LLVMBasicBlockRef basic_block;
 
-	//function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(builder));
-
-	function = LLVMAddFunction(module, fn_name, LLVMFunctionType(LLVMDoubleType(), NULL, 0, 0));
+	function = LLVMAddFunction(module, fn_name, LLVMFunctionType(LLVMVoidType(), NULL, 0, 0));
 
 	basic_block = LLVMAppendBasicBlock(function, "");
 	LLVMPositionBuilderAtEnd(builder, basic_block);
@@ -257,21 +302,16 @@ LLVMValueRef heka_compile_func(zend_op_array *op_array, char* fn_name, LLVMModul
 			case ZEND_EXT_STMT:
 				continue;
 			case ZEND_ECHO:
-
-				php_printf_func = LLVMGetNamedFunction(module, "heka_php_printf");
-				if (!php_printf_func) {
-					zend_error_noreturn(E_ERROR, "Cannot find php_printf");
-				}
-
-				//args[0] = LLVMConstString("%d", strlen("%d") + 1, 0);
-				args[0] = LLVMConstInt(LLVMInt32Type(), 10, 0);
-
-				LLVMBuildCall(builder, php_printf_func, args, 1, "");
+				heka_echo_func(op);
 				break;
+			case ZEND_RETURN:
+				break;
+			default:
+				fprintf(stderr, "%s\n", heka_get_op_name(op->opcode));
 		}
-
-		fprintf(stderr, "%s\n", heka_get_op_name(op->opcode));
 	}
+
+	LLVMBuildRetVoid(builder);
 
 	return function;
 }
@@ -292,7 +332,6 @@ PHP_MINIT_FUNCTION(heka){
 ZEND_API void heka_execute(zend_op_array *op_array TSRMLS_DC)
 {
 	LLVMValueRef function;
-	//char* name;
 
 	/**
 	 * We're only interested in functions
@@ -302,14 +341,19 @@ ZEND_API void heka_execute(zend_op_array *op_array TSRMLS_DC)
 		function = LLVMGetNamedFunction(module, op_array->function_name);
 
 		if (!function) {
+
 			function = heka_compile_func(op_array, op_array->function_name, module, exec_engine TSRMLS_CC);
 			if (!function) {
 				zend_error_noreturn(E_ERROR, "Cannot compile function");
 			}
 
-			LLVMDumpValue(function);
+			//LLVMDumpValue(function);
 		}
 
+		LLVMRunFunction(exec_engine, function, 0, NULL);
+
+	} else {
+		old_execute(op_array TSRMLS_CC);
 	}
 
 	/*fprintf(name, "%s__c__%s__f__%s__s",
@@ -317,43 +361,31 @@ ZEND_API void heka_execute(zend_op_array *op_array TSRMLS_DC)
 		(op_array->scope)? op_array->scope->name : "",
 		(op_array->function_name)? op_array->function_name : "");*/
 
-	old_execute(op_array TSRMLS_CC);
+	//old_execute(op_array TSRMLS_CC);
 }
 
 ZEND_API void heka_execute_internal(zend_execute_data *execute_data_ptr, int return_value_used TSRMLS_DC)
 {
-	//char *fname = NULL;
-	//zend_execute_data *execd;
-
 	zend_execute_internal(execute_data_ptr, return_value_used);
 }
 
-/*const void* barMethodPointer = getMethodPointer(&Foo::Bar);
-const void* bazMethodPointer = getMethodPointer(foo, &Foo::Baz); // will get FooFoo::Baz
-
-llvm::ExecutionEngine* engine = llvm::EngineBuilder(module).Create();
-
-llvm::Function* bar = llvm::Function::Create(, Function::ExternalLinkage, "foo", module);
-engine->addGlobalMapping(bar, const_cast<void*>(barMethodPointer)); // LLVM always takes non-const pointers
-engine->addGlobalMapping(baz, const_cast<void*>(bazMethodPointer));*/
-
 static PHP_MSHUTDOWN_FUNCTION(heka){
 
-	LLVMDumpModule (module);
+	LLVMDumpModule(module);
 
 	//hash_free (&symtbl);
 	LLVMDisposePassManager (pass_mgr);
 	LLVMDisposeBuilder (builder);
 	LLVMDisposeModule (module);
 
-	assert(ZEPHIR_GLOBAL(function_cache) == NULL);
+	//assert(ZEPHIR_GLOBAL(function_cache) == NULL);
 
 	return SUCCESS;
 }
 
 static PHP_RINIT_FUNCTION(heka){
 
-	php_zephir_init_globals(ZEPHIR_VGLOBAL TSRMLS_CC);
+	//php_zephir_init_globals(ZEPHIR_VGLOBAL TSRMLS_CC);
 	//heka_init_interned_strings(TSRMLS_C);
 
 	return SUCCESS;
@@ -361,7 +393,7 @@ static PHP_RINIT_FUNCTION(heka){
 
 static PHP_RSHUTDOWN_FUNCTION(heka){
 
-	if (ZEPHIR_GLOBAL(start_memory) != NULL) {
+	/*if (ZEPHIR_GLOBAL(start_memory) != NULL) {
 		zephir_clean_restore_stack(TSRMLS_C);
 	}
 
@@ -369,7 +401,7 @@ static PHP_RSHUTDOWN_FUNCTION(heka){
 		zend_hash_destroy(ZEPHIR_GLOBAL(function_cache));
 		FREE_HASHTABLE(ZEPHIR_GLOBAL(function_cache));
 		ZEPHIR_GLOBAL(function_cache) = NULL;
-	}
+	}*/
 
 	return SUCCESS;
 }
@@ -383,21 +415,21 @@ static PHP_MINFO_FUNCTION(heka)
 
 static PHP_GINIT_FUNCTION(heka)
 {
-	zephir_memory_entry *start;
+	//zephir_memory_entry *start;
 
-	php_zephir_init_globals(heka_globals TSRMLS_CC);
+	//php_zephir_init_globals(heka_globals TSRMLS_CC);
 
 	/* Start Memory Frame */
-	start = (zephir_memory_entry *) pecalloc(1, sizeof(zephir_memory_entry), 1);
+	/*start = (zephir_memory_entry *) pecalloc(1, sizeof(zephir_memory_entry), 1);
 	start->addresses       = pecalloc(24, sizeof(zval*), 1);
 	start->capacity        = 24;
 	start->hash_addresses  = pecalloc(8, sizeof(zval*), 1);
 	start->hash_capacity   = 8;
 
-	heka_globals->start_memory = start;
+	heka_globals->start_memory = start;*/
 
 	/* Global Constants */
-	ALLOC_PERMANENT_ZVAL(heka_globals->global_false);
+	/*ALLOC_PERMANENT_ZVAL(heka_globals->global_false);
 	INIT_PZVAL(heka_globals->global_false);
 	ZVAL_FALSE(heka_globals->global_false);
 	Z_ADDREF_P(heka_globals->global_false);
@@ -410,17 +442,17 @@ static PHP_GINIT_FUNCTION(heka)
 	ALLOC_PERMANENT_ZVAL(heka_globals->global_null);
 	INIT_PZVAL(heka_globals->global_null);
 	ZVAL_NULL(heka_globals->global_null);
-	Z_ADDREF_P(heka_globals->global_null);
+	Z_ADDREF_P(heka_globals->global_null);*/
 }
 
 static PHP_GSHUTDOWN_FUNCTION(heka)
 {
-	assert(heka_globals->start_memory != NULL);
+	/*assert(heka_globals->start_memory != NULL);
 
 	pefree(heka_globals->start_memory->hash_addresses, 1);
 	pefree(heka_globals->start_memory->addresses, 1);
 	pefree(heka_globals->start_memory, 1);
-	heka_globals->start_memory = NULL;
+	heka_globals->start_memory = NULL;*/
 }
 
 zend_module_entry heka_module_entry = {
@@ -430,11 +462,7 @@ zend_module_entry heka_module_entry = {
 	PHP_HEKA_EXTNAME,
 	NULL,
 	PHP_MINIT(heka),
-#ifndef ZEPHIR_RELEASE
 	PHP_MSHUTDOWN(heka),
-#else
-	NULL,
-#endif
 	PHP_RINIT(heka),
 	PHP_RSHUTDOWN(heka),
 	PHP_MINFO(heka),
