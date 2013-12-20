@@ -183,23 +183,62 @@ char *heka_get_op_name(zend_uint opcode TSRMLS_DC){
 	return NULL;
 }
 
-int heka_init_functions()
+int heka_init_php_printf()
 {
 	LLVMTypeRef *arg_tys;
 	LLVMValueRef function;
 
+	/**
+	 * Initialize php_printf for longs
+	 */
 	arg_tys    = malloc(2 * sizeof(*arg_tys));
 	arg_tys[0] = LLVMPointerType(LLVMInt8Type(), 0);
 	arg_tys[1] = LLVMInt32Type();
-	function = LLVMAddFunction(module, "php_printf", LLVMFunctionType(LLVMVoidType(), arg_tys, 2, 0));
+	function = LLVMAddFunction(module, "php_printf_long", LLVMFunctionType(LLVMVoidType(), arg_tys, 2, 0));
 	if (!function) {
-		zend_error_noreturn(E_ERROR, "Cannot register php_printf");
+		zend_error_noreturn(E_ERROR, "Cannot register php_printf_long");
 	}
 
 	LLVMAddGlobalMapping(exec_engine, function, php_printf);
 	LLVMSetFunctionCallConv(function, LLVMCCallConv);
 	LLVMAddFunctionAttr(function, LLVMNoUnwindAttribute);
 
+	/**
+	 * Initialize php_printf for doubles
+	 */
+	arg_tys    = malloc(2 * sizeof(*arg_tys));
+	arg_tys[0] = LLVMPointerType(LLVMInt8Type(), 0);
+	arg_tys[1] = LLVMDoubleType();
+	function = LLVMAddFunction(module, "php_printf_double", LLVMFunctionType(LLVMVoidType(), arg_tys, 2, 0));
+	if (!function) {
+		zend_error_noreturn(E_ERROR, "Cannot register php_printf_double");
+	}
+
+	LLVMAddGlobalMapping(exec_engine, function, php_printf);
+	LLVMSetFunctionCallConv(function, LLVMCCallConv);
+	LLVMAddFunctionAttr(function, LLVMNoUnwindAttribute);
+
+	/**
+	 * Initialize php_printf for strings
+	 */
+	arg_tys    = malloc(2 * sizeof(*arg_tys));
+	arg_tys[0] = LLVMPointerType(LLVMInt8Type(), 0);
+	arg_tys[1] = LLVMPointerType(LLVMInt8Type(), 0);
+	function = LLVMAddFunction(module, "php_printf_string", LLVMFunctionType(LLVMVoidType(), arg_tys, 2, 0));
+	if (!function) {
+		zend_error_noreturn(E_ERROR, "Cannot register php_printf_string");
+	}
+
+	LLVMAddGlobalMapping(exec_engine, function, php_printf);
+	LLVMSetFunctionCallConv(function, LLVMCCallConv);
+	LLVMAddFunctionAttr(function, LLVMNoUnwindAttribute);
+
+	return 0;
+}
+
+int heka_init_functions()
+{
+	heka_init_php_printf();
 	return 0;
 }
 
@@ -245,8 +284,8 @@ int heka_init_jit_engine(){
 	/*LLVMAddPromoteMemoryToRegisterPass(pass_mgr);
 	LLVMAddInstructionCombiningPass(pass_mgr);
 	LLVMAddReassociatePass(pass_mgr);
-	LLVMAddGVNPass(pass_mgr);
-	LLVMAddCFGSimplificationPass(pass_mgr);*/
+	LLVMAddGVNPass(pass_mgr);*/
+	LLVMAddCFGSimplificationPass(pass_mgr);
 	LLVMInitializeFunctionPassManager(pass_mgr);
 
 	heka_init_functions();
@@ -262,21 +301,42 @@ void heka_echo_func(zend_op* op TSRMLS_DC) {
 
 	if (op->op1.op_type == IS_CONST) {
 
-		php_printf_func = LLVMGetNamedFunction(module, "php_printf");
-		if (!php_printf_func) {
-			zend_error_noreturn(E_ERROR, "Cannot find php_printf");
-		}
-
 		tmp_zval = &op->op1.u.constant;
 		switch (Z_TYPE_P(tmp_zval)) {
+
 			case IS_LONG:
+
+				php_printf_func = LLVMGetNamedFunction(module, "php_printf_long");
+				if (!php_printf_func) {
+					zend_error_noreturn(E_ERROR, "Cannot load php_printf_long");
+				}
+
 				args[0] = LLVMBuildGlobalStringPtr(builder, "%d", "");
 				args[1] = LLVMConstInt(LLVMInt32Type(), Z_LVAL_P(tmp_zval), 0);
 				LLVMBuildCall(builder, php_printf_func, args, 2, "");
 				break;
+
 			case IS_DOUBLE:
+
+				php_printf_func = LLVMGetNamedFunction(module, "php_printf_double");
+				if (!php_printf_func) {
+					zend_error_noreturn(E_ERROR, "Cannot load php_printf_double");
+				}
+
 				args[0] = LLVMBuildGlobalStringPtr(builder, "%f", "");
 				args[1] = LLVMConstReal(LLVMDoubleType(), Z_DVAL_P(tmp_zval));
+				LLVMBuildCall(builder, php_printf_func, args, 2, "");
+				break;
+
+			case IS_STRING:
+
+				php_printf_func = LLVMGetNamedFunction(module, "php_printf_string");
+				if (!php_printf_func) {
+					zend_error_noreturn(E_ERROR, "Cannot load php_printf_string");
+				}
+
+				args[0] = LLVMBuildGlobalStringPtr(builder, "%s", "");
+				args[1] = LLVMBuildGlobalStringPtr(builder, Z_STRVAL_P(tmp_zval), "");
 				LLVMBuildCall(builder, php_printf_func, args, 2, "");
 				break;
 		}
@@ -284,34 +344,133 @@ void heka_echo_func(zend_op* op TSRMLS_DC) {
 
 }
 
-LLVMValueRef heka_compile_func(zend_op_array *op_array, char* fn_name, LLVMModuleRef module, LLVMExecutionEngineRef exec_engine TSRMLS_DC) {
+LLVMBasicBlockRef heka_create_label(LLVMValueRef function, int i, int use_name)
+{
+	char *label_name;
+	LLVMBasicBlockRef branch_bb;
 
-	zend_uint i;
+	if (use_name) {
+		spprintf(&label_name, 0, "label_%d", i);
+		branch_bb   = LLVMAppendBasicBlock(function, label_name);
+	} else {
+		branch_bb   = LLVMAppendBasicBlock(function, "");
+	}
+
+	LLVMPositionBuilderAtEnd(builder, branch_bb);
+	LLVMBuildRetVoid(builder);
+
+	return branch_bb;
+}
+
+LLVMValueRef heka_compile_func(zend_op_array *op_array, char* fn_name, LLVMModuleRef module, LLVMExecutionEngineRef exec_engine TSRMLS_DC)
+{
+
+	zend_uint i, j;
 	LLVMValueRef function;
 	LLVMBasicBlockRef basic_block;
+	unsigned int jump_offset;
+	zend_op *op, *op_dest;
+	LLVMBasicBlockRef blocks[256];
+	int referenced_blocks[256];
+	znode *node;
 
 	function = LLVMAddFunction(module, fn_name, LLVMFunctionType(LLVMVoidType(), NULL, 0, 0));
 
-	basic_block = LLVMAppendBasicBlock(function, "");
+	for (i = 0; i < 256; i++) {
+		referenced_blocks[i] = 0;
+	}
+
+	basic_block = LLVMAppendBasicBlock(function, "init");
 	LLVMPositionBuilderAtEnd(builder, basic_block);
+	LLVMBuildRetVoid(builder);
 
 	for (i = 0; i < op_array->last; ++i) {
-		zend_op* op = op_array->opcodes + i;
+
+		op = op_array->opcodes + i;
+		switch (op->opcode) {
+			case ZEND_JMPZ:
+			case ZEND_JMP:
+
+				for (j = 0; j < op_array->last; ++j) {
+					op_dest = op_array->opcodes + j;
+					if (op->opcode == ZEND_JMPZ) {
+						node = &op->op2;
+					} else {
+						node = &op->op1;
+					}
+					if (op_dest == (node->u.jmp_addr + 1)) {
+						blocks[i] = heka_create_label(function, i, 1);
+						referenced_blocks[j] = 1;
+						break;
+					}
+				}
+				break;
+		}
+
+	}
+
+	for (i = 0; i < op_array->last; ++i) {
+
+		op = op_array->opcodes + i;
 		switch (op->opcode) {
 			case ZEND_EXT_NOP:
 			case ZEND_EXT_STMT:
+				blocks[i] = NULL;
 				continue;
+		}
+
+		switch (op->opcode) {
+			case ZEND_JMPZ:
+			case ZEND_JMP:
+				break;
 			case ZEND_ECHO:
+				if (referenced_blocks[i]) {
+					blocks[i] = heka_create_label(function, i, 1);
+				}
 				heka_echo_func(op);
 				break;
 			case ZEND_RETURN:
+				if (referenced_blocks[i]) {
+					blocks[i] = heka_create_label(function, i, 1);
+				}
+				LLVMBuildRetVoid(builder);
 				break;
 			default:
 				fprintf(stderr, "%s\n", heka_get_op_name(op->opcode));
 		}
 	}
 
-	LLVMBuildRetVoid(builder);
+	for (i = 0; i < op_array->last; ++i) {
+
+		op = op_array->opcodes + i;
+		switch (op->opcode) {
+			case ZEND_JMPZ:
+			case ZEND_JMP:
+				//jump_offset = ((char*) op->op2.u.var - (char*)op_array->opcodes) / sizeof(zend_op);
+				//fprintf(stderr, "%s %u\n", heka_get_op_name((op->op2.u.jmp_addr + 1)->opcode), jump_offset);
+
+				for (j = 0; j < op_array->last; ++j) {
+					op_dest = op_array->opcodes + j;
+					if (op->opcode == ZEND_JMPZ) {
+						node = &op->op2;
+					} else {
+						node = &op->op1;
+					}
+					if (op_dest == (node->u.jmp_addr + 1)) {
+						//fprintf(stderr, "%s %u\n", heka_get_op_name(op_dest->opcode), jump_offset);
+						LLVMPositionBuilderAtEnd(builder, blocks[i]);
+						LLVMBuildBr(builder, blocks[j]);
+						break;
+					}
+				}
+				break;
+		}
+
+	}
+
+	/*basic_block = LLVMAppendBasicBlock(function, "");
+	LLVMPositionBuilderAtEnd(builder, basic_block);
+	LLVMBuildRetVoid(builder);*/
 
 	return function;
 }
@@ -347,10 +506,11 @@ ZEND_API void heka_execute(zend_op_array *op_array TSRMLS_DC)
 				zend_error_noreturn(E_ERROR, "Cannot compile function");
 			}
 
-			//LLVMDumpValue(function);
+			LLVMDumpValue(function);
 		}
 
 		LLVMRunFunction(exec_engine, function, 0, NULL);
+		//LLVMRunFunctionPassManager();
 
 	} else {
 		old_execute(op_array TSRMLS_CC);

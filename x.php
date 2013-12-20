@@ -2,8 +2,9 @@
 
 function do_echo()
 {
-	echo 10;
-	echo 100;
+	if (true) {
+		echo 1;
+	}
 }
 
 do_echo();
