@@ -1,5 +1,6 @@
 <?php
 
+//test
 function do_echo()
 {
 	if (true) {
